@@ -5,9 +5,7 @@ Refer to concrete files and classes from your own repo (for example `Features/Bo
 An unanswered question gives 0 points.
 
 ## 1. A rule you moved
-Pick one business rule (R1–R8). In which file did it live in the starter and in which file does it live now? Why there?
-
-_(your answer here)_
+_R8: era in metoda Cancel in BookingService. Acum e in Booking.cs din Domain_
 
 ## 2. Result instead of an exception
 Why is `Result` a better choice than an exception for "the room is occupied"? What happens in your code when an `Error` is returned?
