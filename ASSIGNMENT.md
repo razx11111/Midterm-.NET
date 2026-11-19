@@ -125,4 +125,4 @@ Send the repository link at minute 60, before the quiz. Anything committed after
 | 54–60 | `DECISIONS.md`, `BUGS.md`, push, send the link |
 | 60–70 | Paper quiz, no laptop |
 
-A new requirement is announced at minute 35. Commit often. Run the application after each step.
+  A new requirement is announced at minute 35. Commit often. Run the application after each step.

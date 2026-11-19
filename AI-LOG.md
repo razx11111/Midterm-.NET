@@ -4,4 +4,4 @@ Write down, in order, what you asked the AI. It is not a punishment: a missing o
 
 | Time (approx.) | What you asked (briefly) | What you kept | What you changed or rejected |
 |---|---|---|---|
-| _(fill in)_ | _(fill in)_ | _(fill in)_ | _(fill in)_ |
+| _9:06_ | _check in the repository for ASSIGNMENT.md. Create a skill that solves the assignment using the courses as guidelines(used chatGPT web)_ | _most of the skill_ | _non-techinicalities and repetitive code pieces_ |
