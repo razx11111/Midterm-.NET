@@ -27,8 +27,7 @@ _(your answer here)_
 ## 5. What you rejected from what the AI gave you
 Give a concrete example of code or an idea proposed by the AI that you corrected or rejected, and say why.
 
-_(your answer here)_
-
+accomplishing R9 with DateTime vs DateOnly. I told it to go with DateOnly because it is easier stored and the logic didn't need all the details DateTime provides.
 ## 6. If you had 30 more minutes
 What would you improve and what risk did you leave in the project?
 
