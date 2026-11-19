@@ -17,12 +17,11 @@ public static class CreateBookingEndpoint
 {
     public static RouteGroupBuilder MapCreateBooking(this RouteGroupBuilder group)
     {
-        group.MapPost("/{roomId:guid}/bookings", async (
+        group.MapPost("/{roomId:guid}/bookings", async Task<Results<Created<CreateBookingResponse>, ProblemHttpResult>> (
             Guid roomId,
             CreateBookingRequest request,
             ICommandHandler<CreateBookingCommand, Booking> handler,
-            CancellationToken cancellationToken)
-            : Task<Results<Created<CreateBookingResponse>, ProblemHttpResult>> =>
+            CancellationToken cancellationToken) =>
         {
             var result = await handler.Handle(
                 new CreateBookingCommand(

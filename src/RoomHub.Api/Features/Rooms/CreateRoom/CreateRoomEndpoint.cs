@@ -13,11 +13,10 @@ public static class CreateRoomEndpoint
 {
     public static RouteGroupBuilder MapCreateRoom(this RouteGroupBuilder group)
     {
-        group.MapPost("/", async (
+        group.MapPost("/", async Task<Results<Created<CreateRoomResponse>, ProblemHttpResult>> (
             CreateRoomRequest request,
             ICommandHandler<CreateRoomCommand, Room> handler,
-            CancellationToken cancellationToken)
-            : Task<Results<Created<CreateRoomResponse>, ProblemHttpResult>> =>
+            CancellationToken cancellationToken) =>
         {
             var result = await handler.Handle(
                 new CreateRoomCommand(request.Name, request.Capacity), cancellationToken);

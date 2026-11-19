@@ -12,11 +12,10 @@ public static class GetRoomByIdEndpoint
 {
     public static RouteGroupBuilder MapGetRoomById(this RouteGroupBuilder group)
     {
-        group.MapGet("/{id:guid}", async (
+        group.MapGet("/{id:guid}", async Task<Results<Ok<GetRoomByIdResponse>, ProblemHttpResult>> (
             Guid id,
             RoomHubDbContext db,
-            CancellationToken cancellationToken)
-            : Task<Results<Ok<GetRoomByIdResponse>, ProblemHttpResult>> =>
+            CancellationToken cancellationToken) =>
         {
             var room = await db.Rooms
                 .AsNoTracking()

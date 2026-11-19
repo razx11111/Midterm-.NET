@@ -9,11 +9,10 @@ public static class CancelBookingEndpoint
 {
     public static RouteGroupBuilder MapCancelBooking(this RouteGroupBuilder group)
     {
-        group.MapPost("/{id:guid}/cancel", async (
+        group.MapPost("/{id:guid}/cancel", async Task<Results<NoContent, ProblemHttpResult>> (
             Guid id,
             ICommandHandler<CancelBookingCommand, Unit> handler,
-            CancellationToken cancellationToken)
-            : Task<Results<NoContent, ProblemHttpResult>> =>
+            CancellationToken cancellationToken) =>
         {
             var result = await handler.Handle(new CancelBookingCommand(id), cancellationToken);
 
