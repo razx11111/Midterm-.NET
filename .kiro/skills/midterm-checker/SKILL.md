@@ -382,6 +382,7 @@ The factory receives the information needed to enforce the rules:
 - Room capacity (`int roomCapacity`).
 - Current UTC time (`DateTime nowUtc`).
 - Existing active booking intervals (`IEnumerable<DateRange> existingActiveRanges`).
+- Count of the participant's existing active bookings on the same UTC day (`int sameDayActiveCount` for this `bookedBy` and the UTC date of `startUtc`), needed for R9.
 
 Do not inject repositories, `DbContext`, or `TimeProvider` into the entity.
 
@@ -401,24 +402,88 @@ Unless `ASSIGNMENT.md` specifies another order, validate in this order:
 3. `Attendees` is positive (`> 0`).
 4. `Attendees` does not exceed room capacity (`<= roomCapacity`).
 5. Start is not in the past.
-6. Duration does not exceed four hours.
+6. Duration does not exceed the room's maximum (R6/R10, see below).
 7. No existing active interval overlaps.
+8. The participant has not already reached the per-day active-booking limit (R9).
 
 Use normalized range values for time and duration comparisons:
 
 ```csharp
 range.StartUtc < nowUtc
 
-range.EndUtc - range.StartUtc > TimeSpan.FromHours(4)
+var maxDuration = roomCapacity > 10
+    ? TimeSpan.FromHours(2)   // R10
+    : TimeSpan.FromHours(4);  // R6
+range.EndUtc - range.StartUtc > maxDuration
 ```
 
 Therefore:
 - Start exactly equal to supplied `nowUtc` is valid.
-- Exactly four hours is valid.
+- For capacity <= 10, exactly four hours is valid; for capacity > 10, exactly two hours is valid.
 - Adjacent bookings are valid.
 - Cancelled bookings do not block an interval.
 
 The repository supplies active intervals; the domain evaluates overlap.
+
+### R9 - per-participant daily active-booking limit
+
+Exact rule from `ASSIGNMENT.md` (verify the current wording before relying on it):
+
+> A participant cannot have more than 2 active bookings per day, across all
+> rooms together. The "day" is the UTC date of `startUtc`. The third active
+> booking on the same day, for the same `bookedBy`, is rejected with 409.
+> Cancelled bookings do not count. Bookings on different days do not affect
+> each other. The rule must live in the domain/handler, not in the endpoint.
+> You may extend the repository with a new method.
+
+Implementation:
+- The limit is 2; a request that would become the third active booking is rejected.
+- Reject when `sameDayActiveCount >= 2`.
+- "Day" is the UTC calendar date of the normalized `startUtc` (`range.StartUtc.Date`), not a rolling 24-hour window.
+- Match the participant by the same `bookedBy` value used for storage (trimmed); confirm whether the comparison is case-sensitive from the assignment or course source and state the assumption if unspecified.
+- The count spans all rooms, so it is independent of the per-room overlap check (R7).
+- Only `Active` bookings count; `Cancelled` ones do not.
+- This is a `Conflict` error (409), like R7 and repeated cancellation.
+
+The rule lives in the domain factory (or the handler orchestration), not the
+endpoint. The domain cannot derive the count from `existingActiveRanges`
+alone, because that set is per-room and carries no `bookedBy` or day grouping.
+Supply the count explicitly. Extend the repository with a method that returns
+the participant's active-booking count for the target UTC day, for example
+`CountActiveBookingsForParticipantOnDayAsync(string bookedBy, DateOnly dayUtc, CancellationToken ct)`,
+and compute the count in the query rather than loading entities.
+
+### R10 - capacity-dependent maximum duration
+
+Exact rule from `ASSIGNMENT.md` (verify the current wording before relying on it):
+
+> Rooms with a capacity greater than 10 can be booked for at most 2 hours
+> (exactly 2 hours is allowed). A longer booking is rejected with 400. Rooms
+> with capacity 10 or less keep the 4-hour limit from R6.
+
+Implementation:
+- This refines R6; it is not a separate pipeline stage. Compute the maximum from capacity and apply it at the existing duration step.
+- `roomCapacity > 10` -> maximum 2 hours; otherwise 4 hours. Both bounds are inclusive.
+- Reject when `range.EndUtc - range.StartUtc > maxDuration`.
+- This is a `Validation` error (400), the same classification as R6.
+- The domain already receives `roomCapacity`, so no new factory input or repository method is needed.
+- Reuse the single `Booking.DurationExceeded` error; the capacity threshold (10) is the only new constant.
+
+### R11 - cancellation lead-time guard
+
+Exact rule from `ASSIGNMENT.md` (verify the current wording before relying on it):
+
+> A booking can be cancelled only if it starts at least 60 minutes from now
+> (current time from `TimeProvider`). Otherwise the cancel request is rejected
+> with 409.
+
+Implementation:
+- `Cancel` needs the current time, so its signature changes to accept `nowUtc`: `Result<Unit> Cancel(DateTime nowUtc)`.
+- Reject when `Range.StartUtc - nowUtc < TimeSpan.FromMinutes(60)`. Exactly 60 minutes is allowed.
+- This covers bookings whose start is now or in the past; they are inside the 60-minute window and cannot be cancelled.
+- This is a `Conflict` error (409).
+- `nowUtc` comes from `TimeProvider` in the CancelBooking handler (`time.GetUtcNow().UtcDateTime`), never `DateTime.UtcNow`.
+- Order relative to R8: confirm from the assignment whether an already-cancelled booking inside the lead-time window returns the R8 conflict or the R11 conflict. Unspecified default: check the `Cancelled` state first (R8 `AlreadyCancelled`), then the lead-time guard (R11), since re-cancelling is a clearer state error. State this assumption.
 
 Suggested errors:
 - `Booking.BookedByRequired`
@@ -428,25 +493,30 @@ Suggested errors:
 - `Booking.StartInPast`
 - `Booking.DurationExceeded`
 - `Booking.RoomOccupied`
+- `Booking.DailyLimitReached`
 - `Booking.AlreadyCancelled`
+- `Booking.CancellationTooLate`
 - `Booking.NotFound`
 
-Validation failures are `Validation` errors. Overlap and repeated cancellation
-are `Conflict` errors. Missing resources are `NotFound` errors.
+Validation failures are `Validation` errors. Overlap, the per-day limit,
+repeated cancellation, and the late-cancellation guard are `Conflict` errors.
+Missing resources are `NotFound` errors.
 
 ### Cancellation
 
 Implement:
 
 ```csharp
-public Result<Unit> Cancel()
+public Result<Unit> Cancel(DateTime nowUtc)
 ```
 
 Behavior:
-- `Active` -> `Cancelled`: success (`Unit.Value`).
-- `Cancelled` -> `Cancelled`: Conflict (`BookingErrors.AlreadyCancelled`).
+- `Cancelled` -> Conflict (`BookingErrors.AlreadyCancelled`), checked first.
+- Start within 60 minutes of `nowUtc` (`Range.StartUtc - nowUtc < TimeSpan.FromMinutes(60)`) -> Conflict (`BookingErrors.CancellationTooLate`), per R11.
+- Otherwise `Active` -> `Cancelled`: success (`Unit.Value`).
 
-Only this domain method changes the cancellation state.
+The handler supplies `nowUtc` from `TimeProvider`. Only this domain method
+changes the cancellation state.
 
 ---
 
@@ -473,6 +543,9 @@ public interface IBookingRepository
     Task<IReadOnlyList<DateRange>> GetActiveRangesForRoomAsync(
         Guid roomId, CancellationToken cancellationToken);
 
+    Task<int> CountActiveBookingsForParticipantOnDayAsync(
+        string bookedBy, DateOnly dayUtc, CancellationToken cancellationToken);
+
     void Add(Booking booking);
 }
 
@@ -489,6 +562,7 @@ Rules:
 - `Add` marks an entity for insertion; it does not save.
 - Cancellation loads a tracked `Booking`.
 - Active-range queries filter by both `roomId` and `BookingStatus.Active`.
+- The R9 count filters by `bookedBy`, `BookingStatus.Active`, and the UTC date of `StartUtc`, and returns a count computed in the database (`CountAsync`) rather than materializing bookings. Compare the stored date using the same UTC normalization the write path applies.
 - Read-only interval queries may use `AsNoTracking()` (verify whether projecting `.Select(b => b.Range)` or `.Select(b => new { b.Range.StartUtc, b.Range.EndUtc })` cleanly applies `UtcDateTimeConverter` in the target EF Core version).
 - `DbContext` itself implements `IUnitOfWork`.
 - Do not create a separate `UnitOfWork` class.
@@ -650,20 +724,22 @@ Keep HTTP `Response` types owned by their endpoint slices.
 **CreateBooking**
 1. Load room.
 2. Return `RoomErrors.NotFound` if missing.
-3. Load active intervals.
+3. Load active intervals for the room.
 4. Obtain `time.GetUtcNow().UtcDateTime`.
-5. Call `Booking.Create` with all required data.
-6. Return failure if present.
-7. Add booking and save.
-8. Return success.
+5. Load the participant's active-booking count for the UTC day of the normalized `startUtc` (R9).
+6. Call `Booking.Create` with all required data, including the active-range set and the same-day count.
+7. Return failure if present.
+8. Add booking and save.
+9. Return success.
 
 **CancelBooking**
 1. Load tracked booking.
 2. Return `BookingErrors.NotFound` if missing.
-3. Call `booking.Cancel()`.
-4. Return failure if present.
-5. Save.
-6. Return `Unit.Value`.
+3. Obtain `time.GetUtcNow().UtcDateTime`.
+4. Call `booking.Cancel(nowUtc)` (enforces R8 and R11).
+5. Return failure if present.
+6. Save.
+7. Return `Unit.Value`.
 
 Handlers must not:
 - Duplicate domain validation.
@@ -765,9 +841,11 @@ Manual request files are not a substitute for deterministic clock tests.
 | Rooms | Valid create/get; missing room; blank name; zero/negative capacity; stored name trimmed |
 | Booking input | Valid create/get; missing booking; blank `BookedBy`; end before/equal start; zero/negative/excess attendees |
 | Precedence | Missing room plus otherwise-invalid booking -> 404 |
-| Time | Past start rejected; start exactly now accepted; four hours accepted; longer rejected |
+| Time | Past start rejected; start exactly now accepted; max duration accepted at the boundary; longer rejected |
+| Duration by capacity (R10) | Capacity <= 10 allows 4h, rejects >4h (400); capacity > 10 allows 2h, rejects >2h (400) |
 | Overlap | Partial overlap and identical intervals rejected; touching intervals accepted; different rooms independent |
-| Cancellation | First cancellation 204 with no body; repeated cancellation 409; missing booking 404; cancelled interval reusable |
+| Daily limit (R9) | Third active booking same participant/UTC day rejected 409; two allowed; cancelled booking does not count toward the limit; different days independent; different participants independent; limit spans all rooms |
+| Cancellation | First cancellation 204 with no body; repeated cancellation 409; missing booking 404; cancelled interval reusable; cancel within 60 min of start rejected 409 (R11); cancel at exactly 60 min allowed |
 | UTC | Supported `DateTime` kinds normalized; persisted/read timestamps retain UTC semantics |
 | Persistence | Created room and booking remain retrievable after restart |
 | HTTP | Correct JSON fields, enum strings, status codes, `ProblemDetails`, and `Location` headers |
@@ -854,7 +932,7 @@ persistence requirements belong at their appropriate boundaries.
 
 Before declaring completion, verify:
 - All five slices exist.
-- R1-R8 and required edge cases work.
+- R1-R11 and required edge cases work.
 - Rich entities and `DateRange` protect their state.
 - `Result`/`Error` replace expected business exceptions.
 - All three write handlers are registered automatically.

@@ -12,7 +12,7 @@ _(your answer here)_
 ## 2. Result instead of an exception
 Why is `Result` a better choice than an exception for "the room is occupied"? What happens in your code when an `Error` is returned?
 
-_(your answer here)_
+Result ne permite sa facem un handling mai bun a unei erori logice intr-un mod mult mai clean si explicit decat cu exceptii. Daca un Error este returnat fara sa fie tratat, in majoritatea cazurilor se va returna un 500 Internal Server Error 
 
 ## 3. Who knows about EF Core?
 Which classes in your project know about EF Core and which do not? What do you gain and what do you pay with Repository + Unit of Work?
